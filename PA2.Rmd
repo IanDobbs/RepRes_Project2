@@ -1,0 +1,112 @@
+---
+title: "The health and economic impact of severe weather events in the United States between 1996 and 2011"
+author: "Ian Dobbs"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.cap = TRUE, fig.align = "center",
+                      fig.path="figures/", options(scipen=999, digits = 2))
+knitr::opts_current$get('label')
+```
+```{r captioner, message=FALSE, echo=FALSE}
+# use captioner to add figure number and caption
+library(captioner)
+fig_nums <- captioner()
+fig_nums("figa", "A table of the top 10 weather events most harmful with respect to population health. Measured by the total combined number of fatalities and injuries")
+fig_nums("figb", "A table of the top 10 weather events with the greatest economic consequences. Measured by the total combined property and crop damage costs (in $B)")
+```
+## Synopsis
+
+In this report I aim to describe the health and economic consequences of severe weather events across the United States (U.S.) between the years 1996 and 2011. The aim is to 1. identify which types of event are most harmful with respect to population health? and 2. which types of events have the greatest economic consequences? To investigate these questions, I obtained data from the U.S. NOAA Storm Database which is collected across the U.S. by the National Weather Service. I specifically examined data for the years between 1996 and 2011 (the most complete years available). From these data, I found that, on average across the U.S., tornadoes are the most harmful events to population health and floods have the greatest economic cost.
+
+## Loading and preprocessing the raw data
+
+From the NOAA Storm Database I obtained data on severe weather events monitored across the United States by the National Weather Service. The events in the dataset start in the year 1950 and end in November 2011.
+
+```{r download, cache=TRUE}
+fileurl <-  "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+download.file(fileurl, destfile = "stormdata.csv.bz2")
+```
+I then read in the data from the comma separated file in the zip archive.
+
+```{r stormdata, cache=TRUE}
+stormdata <- read.csv("stormdata.csv.bz2")
+```
+After reading in the data I check the dimensions (there are 902,297 rows) in this dataset.
+```{r dim}
+dim(stormdata)
+```
+I can also identify the number of unique events in the 'EVTYPE' column
+```{r events, message=FALSE}
+library(dplyr)
+n_distinct(stormdata$EVTYPE)
+```
+## Data Processing
+From 1950 through 1954, only tornado events were recorded. From 1955 through 1992, only tornado, thunderstorm wind and hail events were recorded. From 1996 to present, 48 event types are recorded as defined in NWS Directive 10-1605. Therefore, I have decided to subset the data from 1996-2011 to enable comparison of the most complete years available (there are 653,530 rows) in this dataset.
+```{r stormdata96, cache=TRUE, message=FALSE}
+stormdata <- stormdata %>% mutate(Date = as.Date(BGN_DATE, format = "%m/%d/%Y")) %>%
+        mutate(Year = format(Date, format="%Y")) ## create date and year variable
+stormdata96 <- stormdata %>% filter(Date >= "1996-01-01") ## filter from 1996 onwards
+dim(stormdata96)
+```
+Reducing the analysis down to this time period has also reduced the number of unique events to be examined to 516. However this number is significantly greater than the 48 event types defined in NWS Directive 10-1605. This means there are recording errors and typographical errors in the dataset that need to be taken into account when aggregating the values.
+```{r events96, message=FALSE}
+n_distinct(stormdata96$EVTYPE)
+```
+I have chosen not to correct any recording or typographic errors, because a) it could introduce further error b) insufficient knowledge of severe weather events, c) processing the data to remove events with zero data and selecting the top 10 events reduces this still further. This strategy will result in duplication of similar events in the following tables and plots but not sufficient to affect the overall aim of the analysis.
+
+To create a table of the top 10 weather events with the greatest harm to population health I group the data by 'EVTYPE' and summarise by 'FATALITIES' and 'INJURIES' before slicing the top 10 and arranging the result in descending order.
+```{r health, message=FALSE, results='asis'}
+library(knitr)
+## summarise by event type
+health <- stormdata96 %>% group_by(EVTYPE) %>% 
+        summarise(Sum.Fatalities=sum(FATALITIES), Sum.Injuries=sum(INJURIES)) 
+health <- filter(health, Sum.Fatalities>0 | Sum.Injuries>0) ## remove zero value observations
+health <- health %>% mutate(Total=Sum.Fatalities+Sum.Injuries) ## sum total harm to pop'n health
+health <- health %>% arrange(desc(Total)) %>% slice(1:10) ## arrange by the top 10 weather events
+health <- health[order(-health$Total), ] ## order the top 10 events in descending order
+kable(health, caption = "Table 1: A table of the top 10 weather events most harmful with respect to population health. Measured by the number of fatalities and injuries",
+      col.names = c("Event Type", "Total Fatalities", "Total Injuries", "Total Harm")) ##print table of results
+```
+To create a table of the top 10 weather events with the greatest economic consequences I first have to replace the character description of the exponent values in 'PROPDMGEXP' (property damage) and 'CROPDMGEXP' (crop damage) with their equivalent numeric value.
+```{r economy, message=FALSE, results='asis'}
+economy <- stormdata96 %>% mutate(Prop.Exp = case_when(PROPDMGEXP=="K"~1000,
+                                                 PROPDMGEXP==""~0,
+                                                 PROPDMGEXP=="M"~1000000,
+                                                 PROPDMGEXP=="B"~1000000000,
+                                                 PROPDMGEXP=="0"~10),
+                                 Crop.Exp = case_when(CROPDMGEXP=="K"~1000,
+                                                 CROPDMGEXP==""~0,
+                                                 CROPDMGEXP=="M"~1000000,
+                                                 CROPDMGEXP=="B"~1000000000))
+economy <- economy %>% mutate(Prop.Damage=PROPDMG*Prop.Exp, Crop.Damage=CROPDMG*Crop.Exp)
+economy <- economy %>% group_by(EVTYPE) %>% ## summarise by event type
+        summarise(Sum.Prop=sum(Prop.Damage/1000000000), Sum.Crop=sum(Crop.Damage/1000000000)) 
+economy <- filter(economy, Sum.Prop>0 | Sum.Crop>0) ## remove zero value observations
+economy <- economy %>% mutate(Total=Sum.Prop+Sum.Crop) ## summarise total in $Billion
+economy <- economy %>% arrange(desc(Total)) %>% slice(1:10) ## arrange by the top 10 weather events
+economy <- economy[order(-economy$Total), ] ## order the top 10 events in descending order
+kable(economy, caption = "Table 2: A table of the top 10 weather events with the greatest economic consequences. Measured by property damage and crop damage (in billion dollars)",
+      col.names = c("Event Type", "Total Property Damage", "Total Crop Damage", "Total Damage")) ## print table of results
+```
+## Results
+A plot of the total health impact shows that tornadoes result in the greatest number of fatalities and injuries combined. However, Table 1 shows that whilst tornadoes generate significantly more injuries than any other severe weather event, excessive heat contributes the highest number of fatalities. When considering mitigation action plans policy makers should consider whether resources should focus on reducing deaths or overall harm. 
+```{r results1, message=FALSE, fig.cap=fig_nums("figa")}
+library(ggplot2)
+ggplot(health, aes(x=EVTYPE, y=Total))+
+                geom_point(aes(reorder(EVTYPE, Total)), size=4, color="red") +
+        coord_flip() +
+        ylab("Total population harm") +
+        xlab("")
+```
+A plot of the total economic cost shows that floods result in the greatest cost in combined property and crop damage. However, Table 2 shows that whilst floods generate significantly more property damage than any other severe weather event, drought contributes the highest value for crop damage. This would need to be taken into account when designing mitigation action plans.
+```{r results2, message=FALSE, fig.cap=fig_nums("figb")}
+ggplot(economy, aes(x=EVTYPE, y=Total))+
+        geom_point(aes(reorder(EVTYPE, Total)), size=4, color="blue") +
+        coord_flip() +
+        ylab("Total economic cost ($B)") +
+        xlab("")
+```
+Further detailed analysis should consider resolving the errors in event type recording and further examination of the impact of specific extreme events as potential outliers, for example the tornado super outbreak in 2011, the July 1999 heat wave in the Midwest, and the October 1998 Central Texas floods are observable in the dataset.
